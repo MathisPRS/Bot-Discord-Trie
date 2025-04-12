@@ -1,2 +1,12 @@
-venv
-.env
+**/venv
+**/.env
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.tfstate.json
+**/*.terraform.lock.hcl
+**/*.terraform.rc
+**/.terraform/*
+PCP-NKGYMBN-openrc.sh
+**/*.log
+**/*.swp
