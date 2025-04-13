@@ -31,7 +31,7 @@ def get_video_info(api_key, video_id):
         print(f"Erreur lors de la requête API: {response.status_code}")
 
 # Exemple d'utilisation
-api_key = "AIzaSyCJg1_5mqe1fGyddEu6pWxReZMxs_eh9uQ"
+api_key = ""
 video_url = input("Veuillez entrer l'URL de la vidéo YouTube: ")
 
 try:
