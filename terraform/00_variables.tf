@@ -30,7 +30,7 @@ variable "instance_image_id" {
 
 variable "instance_flavor_name" {
   type    = string
-  default = "a2-ram4-disk50-perf1"
+  default = "a8-ram32-disk50-perf1"
 }
 
 variable "instance_security_groups" {
