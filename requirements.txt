@@ -10,3 +10,4 @@ pytesseract
 beautifulsoup4
 certifi
 snscrape
+playwright

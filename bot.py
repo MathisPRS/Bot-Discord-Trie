@@ -18,7 +18,9 @@ logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
 # Spécifie le chemin de Tesseract
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Remplace par le chemin correct sur ton système
+load_dotenv()
+
+pytesseract.pytesseract.tesseract_cmd = os.getenv("TESSERACT_CMD")
 
 # Configuration de l'API Twitter
 print("Hello le certif est la :"+ certifi.where())
