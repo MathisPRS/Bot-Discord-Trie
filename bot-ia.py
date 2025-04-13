@@ -7,9 +7,11 @@ import torch
 from transformers import CLIPProcessor, CLIPModel, pipeline
 import pytesseract
 import logging
-import os, certifi
+import os
 from playwright.async_api import async_playwright
 from urllib.parse import urlparse, parse_qs
+import re
+
 
 # Création du dossier log s'il n'existe pas
 os.makedirs("log", exist_ok=True)
@@ -70,12 +72,10 @@ def get_video_id(url):
 
 def get_video_info(api_key, video_id):
     url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet&id={video_id}&key={api_key}"
-    logger.info(f"Requête API YouTube: {url}")
     response = requests.get(url)
 
     if response.status_code == 200:
         data = response.json()
-        logger.info(f"Réponse API YouTube: {data}")
         if 'items' in data and len(data['items']) > 0:
             snippet = data['items'][0]['snippet']
             title = snippet['title']
@@ -83,11 +83,16 @@ def get_video_info(api_key, video_id):
             thumbnail_url = snippet['thumbnails']['high']['url']
             return title, description, thumbnail_url
         else:
-            logger.warning("Aucune information trouvée pour cette vidéo.")
+            logger.warning("[YouTube] Aucune vidéo trouvée avec cet ID.")
             return None, None, None
     else:
-        logger.error(f"Erreur lors de la requête API: {response.status_code}")
+        logger.error(f"[YouTube] Erreur API : status {response.status_code}")
         return None, None, None
+    
+
+def extract_links(text):
+    url_pattern = r'https?://[^\s]+'
+    return re.findall(url_pattern, text)
 
 class MessageRouterBot(discord.Client):
     def __init__(self, *, intents):
@@ -101,7 +106,7 @@ class MessageRouterBot(discord.Client):
 
         # Chargement modèle CLIP
         logger.info("Chargement du modèle CLIP...")
-        self.categories = ["anime", "manga", "manhwa", "série", "jeu vidéo", "autre"]
+        self.categories = ["anime", "manga", "manhwa", "jeu vidéo", "autre"]
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.clip_model.eval()
@@ -119,7 +124,9 @@ class MessageRouterBot(discord.Client):
         if message.author.bot:
             return
 
-        content = message.content.lower()
+        content = message.content
+        links = extract_links(content)
+        text_only = re.sub(r'https?://[^\s]+', '', content).strip()
         files = message.attachments
         current_channel = message.channel
 
@@ -127,93 +134,105 @@ class MessageRouterBot(discord.Client):
         clip_channel = discord.utils.get(message.guild.channels, name=self.CLIP_CHANNEL_NAME)
         target_channel = None
 
-        logger.info(f"Message reçu dans le channel {current_channel.name} : {content}")
+        logger.info(f"[MESSAGE] Reçu dans #{current_channel.name} : {content}")
+        logger.info(f"[EXTRACTION] Liens : {links}")
+        logger.info(f"[EXTRACTION] Texte sans lien : {text_only}")
 
-        # Cas lien YouTube
-        if "youtube.com" in content or "youtu.be" in content:
-            try:
-                video_id = get_video_id(content)
-                logger.info(f"ID de la vidéo YouTube extraite: {video_id}")
-                if video_id:
-                    api_key = os.getenv("YOUTUBE_API_KEY")
-                    title, description, thumbnail_url = get_video_info(api_key, video_id)
-                    if title and description and thumbnail_url:
-                        logger.info(f"[YouTube] Titre détecté : {title}")
+        # Analyse des liens
+        for link in links:
+            # Cas lien YouTube
+            if "youtube.com" in link or "youtu.be" in link:
+                try:
+                    video_id = get_video_id(link)
+                    logger.info(f"[YouTube] ID extrait : {video_id}")
+                    if video_id:
+                        api_key = os.getenv("YOUTUBE_API_KEY")
+                        title, description, thumbnail_url = get_video_info(api_key, video_id)
+                        if title and description and thumbnail_url:
+                            logger.info(f"[YouTube] Titre : {title}")
+                            title_result = self.analyze_text_nlp(title)
+                            description_result = self.analyze_text_nlp(description)
+                            image_result = await self.analyze_image_clip(thumbnail_url)
 
-                        # Analyser le titre, la description et la miniature
-                        title_result = self.analyze_text_nlp(title)
-                        description_result = self.analyze_text_nlp(description)
-                        image_result = await self.analyze_image_clip(thumbnail_url)
+                            results = [title_result, description_result, image_result]
+                            if results.count("anime") >= 2 and current_channel != anime_channel:
+                                target_channel = anime_channel
+                except Exception as e:
+                    logger.error(f"[YouTube] Erreur : {e}")
 
-                        results = [title_result, description_result, image_result]
-                        if results.count("anime") >= 2 and current_channel != anime_channel:
-                            target_channel = anime_channel
-            except Exception as e:
-                logger.error(f"[YouTube Error] {e}")
+            # Cas lien X / Twitter
+            elif "x.com" in link or "twitter.com" in link:
+                try:
+                    text_content, image_urls = await get_tweet_data(link)
+                    logger.info(f"[X] Texte détecté : {text_content}")
+                    logger.info(f"[X] Images : {image_urls}")
 
-        # Cas lien X
-        elif "x.com" in content or "twitter.com" in content:
-            text_content, image_urls = await get_tweet_data(content)
-            logger.info(f"[X] Contenu détecté : {text_content}")
-            logger.info(f"[X] Images détectées : {image_urls}")
+                    image_result = "autre"
+                    for img_url in image_urls:
+                        result = await self.analyze_image_clip(img_url)
+                        if result in ["anime", "manga", "manhwa"]:
+                            image_result = result
+                            break
 
-            # Analyser les images
-            image_result = "autre"
-            for img_url in image_urls:
-                result = await self.analyze_image_clip(img_url)
-                if result in ["anime", "manga", "manhwa", "série"]:
-                    image_result = result
-                    break
+                    text_result = self.analyze_text_nlp(text_content)
+                    if (image_result in ["anime", "manga", "manhwa"] or text_result == "anime") and current_channel != anime_channel:
+                        target_channel = anime_channel
+                        logger.info(f"[X] Redirection vers {anime_channel.name}")
+                except Exception as e:
+                    logger.error(f"[X] Erreur : {e}")
 
-            # Analyser le texte avec le modèle NLP
-            text_result = self.analyze_text_nlp(text_content)
+            # Cas lien Outplayed
+            elif "outplayed" in link:
+                if current_channel != clip_channel:
+                    target_channel = clip_channel
+                    logger.info(f"[Clip] Redirection vers {clip_channel.name}")
 
-            if (image_result in ["anime", "manga", "manhwa", "série"] or text_result == "anime") and current_channel != anime_channel:
-                target_channel = anime_channel
-                logger.info(f"Contenu anime détecté, redirection vers {anime_channel.name}")
+            # Cas lien générique
+            else:
+                text_result = self.analyze_text_nlp(link)
+                if text_result == "anime" and current_channel != anime_channel:
+                    target_channel = anime_channel
+                    logger.info(f"[Lien générique] Anime détecté, redirection vers {anime_channel.name}")
 
-        # Cas lien outplayed
-        elif "outplayed" in content:
-            if current_channel != clip_channel:
-                target_channel = clip_channel
-                logger.info(f"Clip vidéo détecté, redirection vers {clip_channel.name}")
-
-        # Cas autre lien
-        elif "http" in content:
-            text_result = self.analyze_text_nlp(content)
+        # Analyse du texte seul s'il reste quelque chose
+        if not links and not files and text_only:
+            text_result = self.analyze_text_nlp(text_only)
             if text_result == "anime" and current_channel != anime_channel:
                 target_channel = anime_channel
-                logger.info(f"Contenu anime détecté, redirection vers {anime_channel.name}")
+                logger.info(f"[Texte seul] Anime détecté, redirection vers {anime_channel.name}")
 
-        # Cas lien image ou upload
+        # Analyse des images uploadées
         elif files:
             for file in files:
                 if file.content_type and "image" in file.content_type:
                     image_url = file.url
                     result = await self.analyze_image_clip(image_url)
-                    logger.info(f"[CLIP] Résultat image : {result}")
-                    if result in ["anime", "manga", "manhwa", "série"] and current_channel != anime_channel:
+                    logger.info(f"[Image uploadée] Résultat CLIP : {result}")
+                    if result in ["anime", "manga", "manhwa"] and current_channel != anime_channel:
                         target_channel = anime_channel
 
-        # Rediriger si besoin
+        # Redirection si nécessaire
         if target_channel:
-            logger.info(f"Redirection du message vers le channel {target_channel.name}")
+            logger.info(f"[REDIRECTION] Vers #{target_channel.name}")
             await target_channel.send(
-                f"🔁 Message de {message.author.mention} déplacé depuis {current_channel.mention} :\n{message.content}"
+                f"🔁 Message de {message.author.mention} déplacé depuis {current_channel.mention} :\n{content}"
             )
             for file in files:
                 file_data = await file.to_file()
                 await target_channel.send(file=file_data)
             await message.delete()
         else:
-            logger.info("Aucune redirection nécessaire.")
+            logger.info("Aucune redirection requise.")
 
     def analyze_text_nlp(self, text):
         try:
             result = self.nlp_model(text, candidate_labels=self.categories)
-            return result["labels"][0]
+            predicted = result["labels"][0]
+            logger.info(f"[NLP] Texte analysé : {text}")
+            logger.info(f"[NLP] Catégorie prédite : {predicted}")
+            return predicted
         except Exception as e:
-            logger.error(f"[Erreur analyse texte] {e}")
+            logger.error(f"[NLP] Erreur analyse texte : {e}")
             return "autre"
 
     async def analyze_image_clip(self, image_url):
@@ -221,22 +240,26 @@ class MessageRouterBot(discord.Client):
             response = requests.get(image_url)
             image = Image.open(BytesIO(response.content)).convert("RGB")
 
-            # CLIP
+            # Analyse CLIP
             inputs = self.clip_processor(text=self.categories, images=image, return_tensors="pt", padding=True)
             with torch.no_grad():
                 outputs = self.clip_model(**inputs)
             probs = outputs.logits_per_image.softmax(dim=1).squeeze()
-            result = self.categories[probs.argmax()]
+            predicted_category = self.categories[probs.argmax()]
 
-            # OCR
-            text = pytesseract.image_to_string(image).lower()
+            logger.info(f"[CLIP] Catégorie prédite (image) : {predicted_category}")
+
+            # Analyse OCR
+            text = pytesseract.image_to_string(image).lower().strip()
             logger.info(f"[OCR] Texte détecté : {text}")
-            if "anime" in text or "manga" in text or "manhwa" in text or "série" in text:
+
+            if any(keyword in text for keyword in ["anime", "manga", "manhwa"]):
+                logger.info("[OCR] Mot-clé anime détecté -> Catégorie forcée : anime")
                 return "anime"
 
-            return result
+            return predicted_category
         except Exception as e:
-            logger.error(f"[Erreur analyse image] {e}")
+            logger.error(f"[CLIP] Erreur analyse image : {e}")
             return "autre"
 
 if __name__ == "__main__":

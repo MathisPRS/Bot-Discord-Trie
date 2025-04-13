@@ -47,7 +47,9 @@ After=network.target
 User=debian
 Group=debian
 WorkingDirectory=/home/debian/Bot-Discord-Trie
-ExecStart=/home/debian/Bot-Discord-Trie/venv/bin/python /home/debian/Bot-Discord-Trie/bot.py
+ExecStartPre=/bin/bash -c 'echo $$ > /home/debian/Bot-Discord-Trie/run/bot-ia.pid'
+ExecStart=/home/debian/Bot-Discord-Trie/venv/bin/python /home/debian/Bot-Discord-Trie/bot-ia.py
+ExecStopPost=/bin/bash -c 'rm -f /home/debian/Bot-Discord-Trie/run/bot-ia.pid'
 Restart=always
 
 [Install]
@@ -56,5 +58,3 @@ EOF
 
 # Recharger systemd, démarrer et activer le service
 sudo systemctl daemon-reload
-sudo systemctl start bot-discord.service
-sudo systemctl enable bot-discord.service
