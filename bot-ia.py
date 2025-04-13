@@ -11,13 +11,22 @@ import os, certifi
 from playwright.async_api import async_playwright
 from urllib.parse import urlparse, parse_qs
 
+# Création du dossier log s'il n'existe pas
+os.makedirs("log", exist_ok=True)
+
 # Configuration du logger
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
+# Ajout d'un handler fichier pour les logs
+file_handler = logging.FileHandler("log/bot-discord.log", encoding="utf-8")
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
 # Spécifie le chemin de Tesseract
 load_dotenv()
-
 pytesseract.pytesseract.tesseract_cmd = os.getenv("TESSERACT_CMD")
 
 async def get_tweet_data(url):
