@@ -7,7 +7,6 @@ pillow
 aiohttp
 requests
 pytesseract
-beautifulsoup4
-certifi
 snscrape
 playwright
+lz4
