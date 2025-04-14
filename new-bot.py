@@ -5,7 +5,6 @@ import re
 from io import BytesIO
 from urllib.parse import parse_qs, urlparse
 
-import discord
 import pytesseract
 import requests
 import torch
@@ -13,12 +12,16 @@ from dotenv import load_dotenv
 from PIL import Image
 from playwright.async_api import async_playwright
 from transformers import (
+    BertForSequenceClassification,
+    BertTokenizer,
     CLIPModel,
     CLIPProcessor,
     DistilBertForSequenceClassification,
     DistilBertTokenizer,
-    ViTFeatureExtractor,
-    ViTForImageClassification,
+    EfficientNetForImageClassification,
+    ResNetForImageClassification,
+    RobertaForSequenceClassification,
+    RobertaTokenizer,
     pipeline,
 )
 
@@ -117,34 +120,41 @@ def extract_links(text):
     url_pattern = r'https?://[^\s]+'
     return re.findall(url_pattern, text)
 
-class MessageRouterBot(discord.Client):
-    def __init__(self, *, intents):
-        super().__init__(intents=intents)
+class MessageRouterBot:
+    def __init__(self):
         load_dotenv()
-        self.token = os.getenv("DISCORD_TOKEN")
 
-        # Config des salons
-        self.ANIME_CHANNEL_NAME = "📺-les-mangas-séries-film"
-        self.CLIP_CHANNEL_NAME = "📺-clip-stylés"
-
-        # Chargement modèle CLIP
+        # Chargement modèle CLIP pour les images
         logger.info("Chargement du modèle CLIP...")
-        self.categories = ["anime", "manga", "manhwa", "jeu vidéo", "film", "série", "musique", "autre"]
+        self.categories = ["anime", "manga", "manhwa", "jeu vidéo", "film", "série", "musique", "sport", "humour","politique" ,"autre"]
         self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.clip_model.eval()
         logger.info("Modèle CLIP chargé.")
 
-        # Chargement modèle NLP
-        logger.info("Chargement du modèle NLP...")
-        self.nlp_model = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-        logger.info("Modèle NLP chargé.")
+        # Chargement modèle EfficientNet pour les images
+        logger.info("Chargement du modèle EfficientNet...")
+        self.efficientnet_model = EfficientNetForImageClassification.from_pretrained("efficientnet-b0")
+        self.efficientnet_feature_extractor = pipeline("image-classification", model=self.efficientnet_model, feature_extractor="efficientnet-b0")
+        logger.info("Modèle EfficientNet chargé.")
+        
+        # Chargement modèle ResNet pour les images
+        logger.info("Chargement du modèle ResNet...")
+        self.resnet_model = ResNetForImageClassification.from_pretrained("microsoft/resnet-50")
+        self.resnet_feature_extractor = pipeline("image-classification", model=self.resnet_model, feature_extractor="resnet-50")
+        logger.info("Modèle ResNet chargé.")
 
-        # Chargement modèle ViT pour les images
-        logger.info("Chargement du modèle ViT...")
-        self.vit_feature_extractor = ViTFeatureExtractor.from_pretrained('google/vit-base-patch16-224-in21k')
-        self.vit_model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224-in21k')
-        logger.info("Modèle ViT chargé.")
+        # Chargement modèle BERT pour les textes
+        logger.info("Chargement du modèle BERT...")
+        self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.bert_model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(self.categories))
+        logger.info("Modèle BERT chargé.")
+
+        # Chargement modèle RoBERTa pour les textes
+        logger.info("Chargement du modèle RoBERTa...")
+        self.roberta_tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+        self.roberta_model = RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=len(self.categories))
+        logger.info("Modèle RoBERTa chargé.")
 
         # Chargement modèle DistilBERT pour les textes
         logger.info("Chargement du modèle DistilBERT...")
@@ -152,65 +162,7 @@ class MessageRouterBot(discord.Client):
         self.distilbert_model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=len(self.categories))
         logger.info("Modèle DistilBERT chargé.")
 
-    async def on_ready(self):
-        logger.info(f"Connecté en tant que {self.user}")
-
-    async def on_message(self, message):
-        if message.author.bot:
-            return
-
-        content = message.content
-        links = extract_links(content)
-        text_only = re.sub(r'https?://[^\s]+', '', content).strip()
-        files = message.attachments
-        current_channel = message.channel
-
-        anime_channel = discord.utils.get(message.guild.channels, name=self.ANIME_CHANNEL_NAME)
-        clip_channel = discord.utils.get(message.guild.channels, name=self.CLIP_CHANNEL_NAME)
-        target_channel = None
-
-        logger.info(f"[MESSAGE] Reçu dans #{current_channel.name} : {content}")
-        logger.info(f"[EXTRACTION] Liens : {links}")
-        logger.info(f"[EXTRACTION] Texte sans lien : {text_only}")
-
-        # Analyse des liens
-        for link in links:
-            if "youtube.com" in link or "youtu.be" in link:
-                target_channel = await self.analyze_youtube_link(link, current_channel, anime_channel)
-            elif "x.com" in link or "twitter.com" in link:
-                target_channel = await self.analyze_x_link(link, current_channel, anime_channel)
-            elif "outplayed" in link:
-                if current_channel != clip_channel:
-                    target_channel = clip_channel
-                    logger.info(f"[Clip] Redirection vers {clip_channel.name}")
-            else:
-                target_channel = await self.analyze_other_link(link, current_channel, anime_channel)
-
-        # Analyse du texte seul s'il reste quelque chose
-        if not links and not files and text_only:
-            target_channel = await self.analyze_text(text_only, current_channel, anime_channel)
-
-        # Analyse des images uploadées
-        elif files:
-            for file in files:
-                if file.content_type and "image" in file.content_type:
-                    image_url = file.url
-                    target_channel = await self.analyze_image(image_url, current_channel, anime_channel)
-
-        # Redirection si nécessaire
-        if target_channel:
-            logger.info(f"[REDIRECTION] Vers #{target_channel.name}")
-            await target_channel.send(
-                f"🔁 Message de {message.author.mention} déplacé depuis {current_channel.mention} :\n{content}"
-            )
-            for file in files:
-                file_data = await file.to_file()
-                await target_channel.send(file=file_data)
-            await message.delete()
-        else:
-            logger.info("Aucune redirection requise.")
-
-    async def analyze_youtube_link(self, link, current_channel, anime_channel):
+    async def analyze_youtube_link(self, link):
         try:
             video_id = get_video_id(link)
             logger.info(f"[YouTube] ID extrait : {video_id}")
@@ -232,13 +184,13 @@ class MessageRouterBot(discord.Client):
 
                     logger.info(f"[YouTube] Résultat final : {final_result}")
 
-                    if final_result == "anime_group" and current_channel != anime_channel:
-                        return anime_channel
+                    if final_result == "anime_group":
+                        return "anime_channel"
         except Exception as e:
             logger.error(f"[YouTube] Erreur : {e}")
         return None
 
-    async def analyze_x_link(self, link, current_channel, anime_channel):
+    async def analyze_x_link(self, link):
         try:
             text_content, image_urls = await get_tweet_data(link)
             logger.info(f"[X] Texte détecté : {text_content}")
@@ -257,13 +209,13 @@ class MessageRouterBot(discord.Client):
 
             logger.info(f"[X] Résultat final : {final_result}")
 
-            if final_result in ["anime", "manga", "manhwa"] and current_channel != anime_channel:
-                return anime_channel
+            if final_result in ["anime", "manga", "manhwa"]:
+                return "anime_channel"
         except Exception as e:
             logger.error(f"[X] Erreur : {e}")
         return None
 
-    async def analyze_other_link(self, link, current_channel, anime_channel):
+    async def analyze_other_link(self, link):
         try:
             # Analyse du texte
             text_results = await self.analyze_text_with_models(link)
@@ -276,30 +228,19 @@ class MessageRouterBot(discord.Client):
 
             logger.info(f"[Autre lien] Résultat final : {final_result}")
 
-            if final_result == "anime" and current_channel != anime_channel:
-                return anime_channel
+            if final_result == "anime":
+                return "anime_channel"
         except Exception as e:
             logger.error(f"[Autre lien] Erreur : {e}")
         return None
 
-    async def analyze_text(self, text, current_channel, anime_channel):
-        try:
-            text_results = await self.analyze_text_with_models(text)
-            final_result = self.calculate_final_result_from_models(text_results)
-            logger.info(f"[Texte seul] Résultat final : {final_result}")
-            if final_result == "anime" and current_channel != anime_channel:
-                return anime_channel
-        except Exception as e:
-            logger.error(f"[Texte seul] Erreur : {e}")
-        return None
-
-    async def analyze_image(self, image_url, current_channel, anime_channel):
+    async def analyze_image(self, image_url):
         try:
             image_results = await self.analyze_image_with_models(image_url)
             final_result = self.calculate_final_result_from_models(image_results)
             logger.info(f"[Image uploadée] Résultat final : {final_result}")
-            if final_result in ["anime", "manga", "manhwa"] and current_channel != anime_channel:
-                return anime_channel
+            if final_result in ["anime", "manga", "manhwa"]:
+                return "anime_channel"
         except Exception as e:
             logger.error(f"[Image uploadée] Erreur : {e}")
         return None
@@ -311,18 +252,18 @@ class MessageRouterBot(discord.Client):
 
             # Analyse avec les trois modèles en parallèle
             clip_task = asyncio.create_task(self.analyze_image_clip(image))
-            vit_task = asyncio.create_task(self.analyze_with_vit(image))
-            distilbert_task = asyncio.create_task(self.analyze_with_distilbert(image))
+            efficientnet_task = asyncio.create_task(self.analyze_with_efficientnet(image))
+            resnet_task = asyncio.create_task(self.analyze_with_resnet(image))
 
             # Attendre que toutes les tâches soient terminées
-            clip_result, vit_result, distilbert_result = await asyncio.gather(clip_task, vit_task, distilbert_task)
+            clip_result, efficientnet_result, resnet_result = await asyncio.gather(clip_task, efficientnet_task, resnet_task)
 
             # Log des prédictions pour chaque modèle
             logger.info(f"[CLIP] Catégorie prédite : {clip_result[0]} avec probabilité {clip_result[1]:.2f}")
-            logger.info(f"[ViT] Catégorie prédite : {vit_result[0]} avec probabilité {vit_result[1]:.2f}")
-            logger.info(f"[DistilBERT] Catégorie prédite : {distilbert_result[0]} avec probabilité {distilbert_result[1]:.2f}")
+            logger.info(f"[EfficientNet] Catégorie prédite : {efficientnet_result[0]} avec probabilité {efficientnet_result[1]:.2f}")
+            logger.info(f"[ResNet] Catégorie prédite : {resnet_result[0]} avec probabilité {resnet_result[1]:.2f}")
 
-            return [clip_result, vit_result, distilbert_result]
+            return [clip_result, efficientnet_result, resnet_result]
         except Exception as e:
             logger.error(f"[IMAGE] Erreur analyse image : {e}")
             return [("autre", 0), ("autre", 0), ("autre", 0)]
@@ -334,56 +275,77 @@ class MessageRouterBot(discord.Client):
         probs = outputs.logits_per_image.softmax(dim=1).squeeze()
         predicted_category = self.categories[probs.argmax()]
         predicted_probability = probs.max().item()
+        logger.info(f"[CLIP] Probabilités : {', '.join([f'{cat}: {probs[i]:.2f}' for i, cat in enumerate(self.categories)])}")
         return predicted_category, predicted_probability
-
-    async def analyze_with_vit(self, image):
-        inputs = self.vit_feature_extractor(images=image, return_tensors="pt", padding=True)
+    
+    async def analyze_with_efficientnet(self, image):
+        inputs = self.efficientnet_feature_extractor(images=image, return_tensors="pt")
         with torch.no_grad():
-            outputs = self.vit_model(**inputs)
+            outputs = self.efficientnet_model(**inputs)
         probs = outputs.logits.softmax(dim=1).squeeze()
         predicted_category = self.categories[probs.argmax()]
         predicted_probability = probs.max().item()
+        logger.info(f"[EfficientNet] Probabilités : {', '.join([f'{cat}: {probs[i]:.2f}' for i, cat in enumerate(self.categories)])}")
         return predicted_category, predicted_probability
-
+    
+    async def analyze_with_resnet(self, image):
+        inputs = self.resnet_feature_extractor(images=image, return_tensors="pt")
+        with torch.no_grad():
+            outputs = self.resnet_model(**inputs)
+        probs = outputs.logits.softmax(dim=1).squeeze()
+        predicted_category = self.categories[probs.argmax()]
+        predicted_probability = probs.max().item()
+        logger.info(f"[ResNet] Probabilités : {', '.join([f'{cat}: {probs[i]:.2f}' for i, cat in enumerate(self.categories)])}")
+        return predicted_category, predicted_probability
+    
     async def analyze_text_with_models(self, text):
         try:
             # Analyse avec les trois modèles en parallèle
-            nlp_task = asyncio.create_task(self.analyze_text_nlp(text))
-            vit_task = asyncio.create_task(self.analyze_with_vit_text(text))
-            distilbert_task = asyncio.create_task(self.analyze_with_distilbert_text(text))
+            bert_task = asyncio.create_task(self.analyze_text_bert(text))
+            roberta_task = asyncio.create_task(self.analyze_text_roberta(text))
+            distilbert_task = asyncio.create_task(self.analyze_text_distilbert(text))
 
             # Attendre que toutes les tâches soient terminées
-            nlp_result, vit_result, distilbert_result = await asyncio.gather(nlp_task, vit_task, distilbert_task)
+            bert_result, roberta_result, distilbert_result = await asyncio.gather(bert_task, roberta_task, distilbert_task)
 
             # Log des prédictions pour chaque modèle
-            logger.info(f"[NLP] Catégorie prédite : {nlp_result[0]} avec probabilité {nlp_result[1]:.2f}")
-            logger.info(f"[ViT] Catégorie prédite : {vit_result[0]} avec probabilité {vit_result[1]:.2f}")
+            logger.info(f"[BERT] Catégorie prédite : {bert_result[0]} avec probabilité {bert_result[1]:.2f}")
+            logger.info(f"[RoBERTa] Catégorie prédite : {roberta_result[0]} avec probabilité {roberta_result[1]:.2f}")
             logger.info(f"[DistilBERT] Catégorie prédite : {distilbert_result[0]} avec probabilité {distilbert_result[1]:.2f}")
 
-            return [nlp_result, vit_result, distilbert_result]
+            return [bert_result, roberta_result, distilbert_result]
         except Exception as e:
             logger.error(f"[TEXT] Erreur analyse texte : {e}")
             return [("autre", 0), ("autre", 0), ("autre", 0)]
-
-    async def analyze_text_nlp(self, text):
-        result = self.nlp_model(text, candidate_labels=self.categories)
-        probs = result["scores"]
-        predicted_category = result["labels"][probs.index(max(probs))]
-        predicted_probability = max(probs)
+        
+    async def analyze_text_bert(self, text):
+        inputs = self.bert_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+        with torch.no_grad():
+            outputs = self.bert_model(**inputs)
+        probs = outputs.logits.softmax(dim=1).squeeze()
+        predicted_category = self.categories[probs.argmax()]
+        predicted_probability = probs.max().item()
+        logger.info(f"[BERT] Probabilités : {', '.join([f'{cat}: {probs[i]:.2f}' for i, cat in enumerate(self.categories)])}")
         return predicted_category, predicted_probability
-
-    async def analyze_with_vit_text(self, text):
-        # Utilisation de ViT pour le texte (exemple fictif)
-        # Retourne une catégorie et une probabilité fictives pour l'exemple
-        return "catégorie_vit", 0.85
-
-    async def analyze_with_distilbert_text(self, text):
+    
+    async def analyze_text_roberta(self, text):
+        inputs = self.roberta_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+        with torch.no_grad():
+            outputs = self.roberta_model(**inputs)
+        probs = outputs.logits.softmax(dim=1).squeeze()
+        predicted_category = self.categories[probs.argmax()]
+        predicted_probability = probs.max().item()
+        logger.info(f"[RoBERTa] Probabilités : {', '.join([f'{cat}: {probs[i]:.2f}' for i, cat in enumerate(self.categories)])}")
+        return predicted_category, predicted_probability
+    
+    async def analyze_text_distilbert(self, text):
         inputs = self.distilbert_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             outputs = self.distilbert_model(**inputs)
         probs = outputs.logits.softmax(dim=1).squeeze()
         predicted_category = self.categories[probs.argmax()]
         predicted_probability = probs.max().item()
+        logger.info(f"[DistilBERT] Probabilités : {', '.join([f'{cat}: {probs[i]:.2f}' for i, cat in enumerate(self.categories)])}")
         return predicted_category, predicted_probability
 
     def calculate_final_result_from_models(self, results):
@@ -399,9 +361,11 @@ class MessageRouterBot(discord.Client):
             "film": category_scores["film"],
             "série": category_scores["série"],
             "musique": category_scores["musique"],
+            "sport": category_scores["sport"],
+            "humour": category_scores["humour"],
+            "politique": category_scores["politique"],
             "autre": category_scores["autre"],
         }
-
         final_category = max(combined_category_scores, key=combined_category_scores.get)
         final_probability = combined_category_scores[final_category]
 
@@ -414,10 +378,38 @@ class MessageRouterBot(discord.Client):
         else:
             return None
 
-if __name__ == "__main__":
-    intents = discord.Intents.default()
-    intents.messages = True
-    intents.message_content = True
+async def process_message(bot, message_content):
+    logger.info(f"Message reçu : {message_content}")
+    links = extract_links(message_content)
+    image_urls = re.findall(r'https?://[^\s]+\.(jpg|jpeg|png|gif)', message_content)
 
-    bot = MessageRouterBot(intents=intents)
-    bot.run(bot.token)
+    target_channel = None
+
+    # Analyse des liens
+    for link in links:
+        if "youtube.com" in link or "youtu.be" in link:
+            target_channel = await bot.analyze_youtube_link(link)
+        elif "x.com" in link or "twitter.com" in link:
+            target_channel = await bot.analyze_x_link(link)
+        elif "outplayed" in link:
+            target_channel = "clip_channel"
+        else:
+            target_channel = await bot.analyze_other_link(link)
+
+    # Analyse des images
+    for image_url in image_urls:
+        target_channel = await bot.analyze_image(image_url)
+
+    if target_channel:
+        logger.info(f"Message transféré dans le channel : {target_channel}")
+    else:
+        logger.info("Aucune redirection requise.")
+
+async def main():
+    bot = MessageRouterBot()
+    while True:
+        message_content = input("Entrez un message : ")
+        await process_message(bot, message_content)
+
+# Exécuter la boucle principale
+asyncio.run(main())
