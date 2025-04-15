@@ -1,0 +1,9 @@
+discord.py
+requests
+python-dotenv
+Pillow
+torch
+transformers
+playwright
+pytesseract
+configparser

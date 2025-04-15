@@ -10,3 +10,7 @@
 PCP-NKGYMBN-openrc.sh
 **/*.log
 **/*.swp
+**/*.log
+**/log
+**/__pycache__/
+**/config.cfg
