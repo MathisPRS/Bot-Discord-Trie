@@ -21,8 +21,6 @@ async def handle_message(bot, message):
     files = message.attachments
     current_channel = message.channel
 
-    anime_channel = discord.utils.get(message.guild.channels, name=bot.ANIME_CHANNEL_NAME)
-    clip_channel = discord.utils.get(message.guild.channels, name=bot.CLIP_CHANNEL_NAME)
     target_channel = None
 
     logging.info(f"[MESSAGE] Reçu dans #{current_channel.name} : {content}")
@@ -42,8 +40,8 @@ async def handle_message(bot, message):
             target_channel = await analyze_x_link(bot, link)
         # Cas lien Outplayed
         elif "outplayed" in link:
-            if current_channel != clip_channel:
-                target_channel = clip_channel
+            if current_channel != bot.clip_channel:
+                target_channel = bot.clip_channel
         # Cas lien générique
         else:
             target_channel = await analyze_other_link(bot, link)
@@ -58,8 +56,8 @@ async def handle_message(bot, message):
     if not links and not files and text_without_links:
         text_results = await analyze_text_with_models(bot, text_without_links)
         final_result = bot.scoring.calculate_final_result_from_models(text_results)
-        if final_result == "anime_group" and current_channel != anime_channel:
-            target_channel = anime_channel
+        if final_result == "anime_group" and current_channel != bot.anime_channel:
+            target_channel = bot.anime_channel
 
     # Redirection si nécessaire
     if target_channel:
@@ -140,7 +138,7 @@ async def analyze_image(bot, image_url):
         image_results = await analyze_image_with_models(bot, image_url)
         final_result = bot.scoring.calculate_final_result_from_models(image_results)
         logging.info(f"[Image uploadée] Résultat final : {final_result}")
-        if final_result in ["anime", "manga", "manhwa"]:
+        if final_result == "anime_group":
             return bot.anime_channel
     except Exception as e:
         logging.error(f"[Image uploadée] Erreur : {e}")

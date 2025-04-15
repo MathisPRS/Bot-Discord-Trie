@@ -1,3 +1,4 @@
+import logging
 class Scoring:
     def __init__(self):
         self.scores = {
@@ -31,6 +32,7 @@ class Scoring:
         }
         final_category = max(combined_category_scores, key=combined_category_scores.get)
         final_probability = combined_category_scores[final_category]
+        logging.info(f"[FINAL RESULT] Cumul prob : {final_category} : {final_probability}")
 
         if final_probability > 0.92:
             return final_category

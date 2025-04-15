@@ -76,16 +76,11 @@ async def analyze_image_with_models(bot, image_url):
         image = Image.open(BytesIO(response.content)).convert("RGB")
 
         clip_task = asyncio.create_task(bot.clip_model.analyze(image, bot.categories))
-        efficientnet_task = asyncio.create_task(bot.efficientnet_model.analyze(image, bot.categories))
-        resnet_task = asyncio.create_task(bot.resnet_model.analyze(image, bot.categories))
 
-        clip_result, efficientnet_result, resnet_result = await asyncio.gather(clip_task, efficientnet_task, resnet_task)
+        clip_result = await clip_task
 
         logging.info(f"[CLIP] Catégorie prédite : {clip_result[0]} avec probabilité {clip_result[1]:.2f}")
-        logging.info(f"[EfficientNet] Catégorie prédite : {efficientnet_result[0]} avec probabilité {efficientnet_result[1]:.2f}")
-        logging.info(f"[ResNet] Catégorie prédite : {resnet_result[0]} avec probabilité {resnet_result[1]:.2f}")
-
-        return [clip_result, efficientnet_result, resnet_result]
+        return [clip_result]
     except Exception as e:
         logging.error(f"[IMAGE] Erreur analyse image : {e}")
-        return [("autre", 0), ("autre", 0), ("autre", 0)]
+        return [("autre", 0.0)]
