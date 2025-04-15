@@ -14,3 +14,4 @@ PCP-NKGYMBN-openrc.sh
 **/log
 **/__pycache__/
 **/config.cfg
+**/*.pyc
