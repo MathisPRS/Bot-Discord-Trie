@@ -7,15 +7,16 @@ class Scoring:
             "other_link": {"text": 0.7, "image": 0.3},
             "clip": {"link": 1.0}
         }
+        self.categories = ["anime", "manga", "manhwa", "jeu vidéo", "film", "série", "musique", "sport", "humour", "politique", "autre"]
 
     def get_score(self, category, element):
         return self.scores.get(category, {}).get(element, 0)
 
     def calculate_final_result_from_models(self, results):
         category_scores = {category: 0 for category in self.categories}
-        for result in results:
-            for category, probability in result:
-                category_scores[category] += probability
+        
+        for predicted_category, probability in results:
+            category_scores[predicted_category] += probability
 
         combined_category_scores = {
             "anime_group": category_scores["anime"] + category_scores["manga"] + category_scores["manhwa"],

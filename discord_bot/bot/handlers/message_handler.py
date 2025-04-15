@@ -14,7 +14,10 @@ async def handle_message(bot, message):
 
     content = message.content
     links = extract_links(content)
-    text_only = re.sub(r'https?://[^\s]+', '', content).strip()
+    text_without_links = message.content
+    for link in links:
+        text_without_links = text_without_links.replace(link, "")
+
     files = message.attachments
     current_channel = message.channel
 
@@ -24,8 +27,11 @@ async def handle_message(bot, message):
 
     logging.info(f"[MESSAGE] Reçu dans #{current_channel.name} : {content}")
     logging.info(f"[EXTRACTION] Liens : {links}")
-    logging.info(f"[EXTRACTION] Texte sans lien : {text_only}")
+    logging.info(f"[EXTRACTION] Texte sans lien : {text_without_links}")
 
+    if not message.attachments and not links:
+        logging.info("[IGNORED] Aucun lien ou image détecté, message ignoré.")
+        return
     # Analyse des liens
     for link in links:
         # Cas lien YouTube
@@ -49,8 +55,8 @@ async def handle_message(bot, message):
             target_channel = await analyze_image(bot, image_url)
 
     # Analyse du texte seul s'il reste quelque chose
-    if not links and not files and text_only:
-        text_results = await analyze_text_with_models(bot, text_only)
+    if not links and not files and text_without_links:
+        text_results = await analyze_text_with_models(bot, text_without_links)
         final_result = bot.scoring.calculate_final_result_from_models(text_results)
         if final_result == "anime_group" and current_channel != anime_channel:
             target_channel = anime_channel
