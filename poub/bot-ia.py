@@ -135,8 +135,6 @@ class MessageRouterBot(discord.Client):
         target_channel = None
 
         logger.info(f"[MESSAGE] Reçu dans #{current_channel.name} : {content}")
-        logger.info(f"[EXTRACTION] Liens : {links}")
-        logger.info(f"[EXTRACTION] Texte sans lien : {text_only}")
 
         # Analyse des liens
         for link in links:

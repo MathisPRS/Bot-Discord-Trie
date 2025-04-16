@@ -1,6 +1,6 @@
 import torch
 from transformers import RobertaForSequenceClassification, RobertaTokenizer
-
+import logging
 
 class RoBERTaModelWrapper:
     def __init__(self, categories):
@@ -13,6 +13,12 @@ class RoBERTaModelWrapper:
         with torch.no_grad():
             outputs = self.model(**inputs)
         probs = outputs.logits.softmax(dim=1).squeeze()
+
+        # Log des probabilités pour chaque catégorie
+        for i, category in enumerate(self.categories):
+            logging.info(f"[RoBERTa] Probabilité pour {category} : {probs[i].item():.2f}")
+
         predicted_category = self.categories[probs.argmax()]
         predicted_probability = probs.max().item()
+        
         return predicted_category, predicted_probability

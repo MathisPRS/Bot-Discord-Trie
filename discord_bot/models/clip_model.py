@@ -1,7 +1,7 @@
 from io import BytesIO
-
 import requests
 import torch
+import logging
 from PIL import Image
 from transformers import CLIPImageProcessor, CLIPModel, CLIPProcessor, CLIPTokenizer
 
@@ -16,7 +16,7 @@ class CLIPModelWrapper:
         try:
             if not categories:
                 print("[ERROR] [CLIP] Liste des catégories vide.")
-                return None, 0.0
+                return []
 
             if isinstance(image, str):
                 if image.startswith("http"):
@@ -24,8 +24,6 @@ class CLIPModelWrapper:
                 else:
                     image = Image.open(image).convert("RGB")
 
-            # Log des catégories
-            print(f"[INFO] [CLIP] Catégories : {categories}")
             inputs = self.processor(text=categories, images=image, return_tensors="pt", padding=True)
 
             with torch.no_grad():
@@ -33,20 +31,15 @@ class CLIPModelWrapper:
 
             probs = outputs.logits_per_image.softmax(dim=1).squeeze()
 
-            # Log des probabilités
-            print(f"[INFO] [CLIP] Probabilités : {probs}")
-
             # Log des probabilités arrondies pour chaque catégorie
+            results = []
             for i, category in enumerate(categories):
-                print(f"[INFO] [CLIP] Probabilité pour {category} : {probs[i].item():.2f}")
+                probability = probs[i].item()
+                logging.info(f"[CLIP] Probabilité pour {category} : {probability:.2f}")
+                results.append((category, probability))
 
-            predicted_category = categories[probs.argmax()]
-            predicted_probability = probs.max().item()
-
-            # Log du résultat final
-            print(f"[INFO] [CLIP] Catégorie prédite : {predicted_category} avec probabilité {predicted_probability:.2f}")
-            return predicted_category, predicted_probability
+            return results
 
         except Exception as e:
-            print(f"[ERROR] [CLIP] Erreur analyse image : {e}")
-            return None, 0.0
+            logging.error(f"[CLIP] Erreur analyse image : {e}")
+            return []

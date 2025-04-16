@@ -77,10 +77,13 @@ async def analyze_image_with_models(bot, image_url):
 
         clip_task = asyncio.create_task(bot.clip_model.analyze(image, bot.categories))
 
-        clip_result = await clip_task
+        clip_results = await clip_task
+        best_category, best_probability = max(clip_results, key=lambda x: x[1])
 
-        logging.info(f"[CLIP] Catégorie prédite : {clip_result[0]} avec probabilité {clip_result[1]:.2f}")
-        return [clip_result]
+        logging.info(f"[CLIP] Catégorie prédite : {best_category} avec probabilité {best_probability} ")
+
+
+        return clip_results
     except Exception as e:
         logging.error(f"[IMAGE] Erreur analyse image : {e}")
-        return [("autre", 0.0)]
+        return []
