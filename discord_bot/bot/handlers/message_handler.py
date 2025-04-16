@@ -7,7 +7,7 @@ import requests
 import discord
 from config import DISCORD_TOKEN, YOUTUBE_API_KEY, TESSERACT_CMD
 from utils.image_utils import analyze_image_with_models, extract_links, get_tweet_data, get_video_id, get_video_info
-from utils.text_utils import analyze_text_with_models
+from utils.text_utils import analyze_text_with_models, analyze_text
 
 
 async def handle_message(bot, message):
@@ -90,12 +90,18 @@ async def analyze_youtube_link(bot, link):
             title, description, thumbnail_url = get_video_info(api_key, video_id)
             if title and description and thumbnail_url:
                 logging.info(f"[YouTube] Titre : {title}")
+                youtube_text = f"{title}\n{description}"
+                text_results = await analyze_text_with_models(bot, youtube_text)
 
-                title_results = await analyze_text_with_models(bot, title)
-                description_results = await analyze_text_with_models(bot, description)
                 image_results = await analyze_image_with_models(bot, thumbnail_url)
+                adjusted_text_results = await analyze_text(youtube_text, dict(text_results))
 
-                final_result = bot.scoring.calculate_final_result_from_models(title_results + description_results + image_results)
+                combined_results = {
+                    "image": image_results,
+                    "text": adjusted_text_results
+                }
+
+                final_result = bot.scoring.calculate_final_result_from_models(combined_results + image_results)
 
                 logging.info(f"[YouTube] Résultat final : {final_result}")
 
@@ -149,9 +155,11 @@ async def analyze_image(bot, image_url):
 
         text_results = await analyze_text_with_models(bot, extracted_text)
 
+        adjusted_text_results = await analyze_text(extracted_text, dict(text_results))
+
         combined_results = {
             "image": image_results,
-            "text": text_results
+            "text": adjusted_text_results
         }
 
         final_result = bot.scoring.calculate_final_result_from_models(combined_results)
