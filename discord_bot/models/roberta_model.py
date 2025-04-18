@@ -1,24 +1,20 @@
-import torch
-from transformers import RobertaForSequenceClassification, RobertaTokenizer
+from transformers import pipeline
 import logging
 
 class RoBERTaModelWrapper:
     def __init__(self, categories):
-        self.tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
-        self.model = RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=len(categories))
         self.categories = categories
+        self.classifier = pipeline(
+            "zero-shot-classification",
+            model="MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+        )
 
     async def analyze(self, text):
-        inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        probs = outputs.logits.softmax(dim=1).squeeze()
+        result = self.classifier(text, candidate_labels=self.categories)
 
-        # Log des probabilités pour chaque catégorie
-        for i, category in enumerate(self.categories):
-            logging.info(f"[RoBERTa] Probabilité pour {category} : {probs[i].item():.2f}")
+        results = []
+        for label, score in zip(result["labels"], result["scores"]):
+            logging.info(f"[RoBERTa] Probabilité pour {label} : {score:.2f}")
+            results.append((label, score))
 
-        predicted_category = self.categories[probs.argmax()]
-        predicted_probability = probs.max().item()
-        
-        return predicted_category, predicted_probability
+        return results

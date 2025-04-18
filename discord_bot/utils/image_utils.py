@@ -79,7 +79,6 @@ async def analyze_image_with_models(bot, image_url):
 
         clip_results = await clip_task
         best_category, best_probability = max(clip_results, key=lambda x: x[1])
-
         logging.info(f"[CLIP] Catégorie prédite : {best_category} avec probabilité {best_probability} ")
 
 

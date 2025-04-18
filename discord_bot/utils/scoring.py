@@ -5,7 +5,7 @@ class Scoring:
         self.scores = {
             "youtube": {"title": 0.5, "description": 0.3, "thumbnail": 0.2},
             "x": {"text": 0.6, "image": 0.4},
-            "image": {"image": 1, "text": 0.5},
+            "image": {"image": 1, "text": 0.6},
             "other_link": {"text": 0.7, "image": 0.3},
             "clip": {"link": 1.0}
         }
@@ -15,32 +15,58 @@ class Scoring:
         return self.scores.get(category, {}).get(element, 0)
 
     def calculate_final_result_from_models(self, results):
-        category_scores = {category: 0 for category in self.categories}
+        try:
+            # Étape 1 : Regrouper les scores texte et image dans deux dictionnaires séparés
+            image_category_scores = {category: 0 for category in self.categories}
+            text_category_scores = {category: 0 for category in self.categories}
 
-        for result_type, result_list in results.items():
-            for predicted_category, probability in result_list:
-                category_scores[predicted_category] += probability * self.get_score("image", result_type)
+            for result_type, result_list in results.items():
+                for predicted_category, probability in result_list:
+                    if result_type == "image":
+                        image_category_scores[predicted_category] += probability * self.get_score("image", "image")
+                    elif result_type == "text":
+                        text_category_scores[predicted_category] += probability * self.get_score("image", "text")
 
-        # Calcul des scores combinés
-        combined_category_scores = {
-            "anime_group": category_scores["anime"] + category_scores["manga"] + category_scores["manhwa"],
-            "jeu vidéo": category_scores["jeu vidéo"],
-            "film / série": category_scores["film / série"],
-            "célébrité / influenceur": category_scores["célébrité / influenceur"],
-            "musique": category_scores["musique"],
-            "sport / e-sport": category_scores["sport / e-sport"],
-            "meme / humour": category_scores["meme / humour"],
-            "nature / animaux": category_scores["nature / animaux"],
-            "autre": category_scores["autre"],
-        }
+            # Étape 2 : Regrouper les scores similaires dans chaque groupe
+            def combine_scores(source_scores):
+                return {
+                    "anime_group": source_scores["anime"] + source_scores["manga"] + source_scores["manhwa"],
+                    "jeu vidéo": source_scores["jeu vidéo"],
+                    "film / série": source_scores["film / série"],
+                    "célébrité / influenceur": source_scores["célébrité / influenceur"],
+                    "musique": source_scores["musique"],
+                    "sport / e-sport": source_scores["sport / e-sport"],
+                    "meme / humour": source_scores["meme / humour"],
+                    "nature / animaux": source_scores["nature / animaux"],
+                    "autre": source_scores["autre"],
+                }
 
-        final_category = max(combined_category_scores, key=combined_category_scores.get)
-        final_probability = combined_category_scores[final_category]
-        logging.info(f"[FINAL RESULT] Score de la catégorie gagnante : {final_category} : {final_probability:.2f}")
+            combined_image_scores = combine_scores(image_category_scores)
+            combined_text_scores = combine_scores(text_category_scores)
 
-        if final_probability > 0.92:
+            # Étape 3 : Trouver la meilleure catégorie pour chaque type
+            best_image_category = max(combined_image_scores, key=combined_image_scores.get)
+            best_image_score = combined_image_scores[best_image_category]
+
+            best_text_category = max(combined_text_scores, key=combined_text_scores.get)
+            best_text_score = combined_text_scores[best_text_category]
+
+            logging.info(f"[SCORING] Image: {best_image_category} ({best_image_score:.2f}) | Texte: {best_text_category} ({best_text_score:.2f})")
+
+            # Étape 4 : Choisir la catégorie finale
+            if best_image_category == best_text_category:
+                final_category = best_image_category
+            else:
+                final_category = best_image_category if best_image_score > best_text_score else best_text_category
+
+            # Étape 5 : Vérification du seuil minimum
+            if best_image_score < 0.3 and best_text_score < 0.3:
+                logging.info("[FINAL RESULT] Scores trop faibles pour une redirection")
+                return None
+
+            logging.info(f"[FINAL RESULT] Catégorie retenue : {final_category}")
             return final_category
-        elif final_probability > 0.55:
-            return final_category if final_category == "anime_group" else None
-        else:
+
+        except Exception as e:
+            logging.error(f"[SCORING ERROR] Erreur pendant le calcul final : {e}")
             return None
